@@ -28,6 +28,7 @@ project description for details.
 
 Good luck and happy searching!
 """
+from collections import defaultdict
 import sys
 from game import Directions
 from game import Agent
@@ -292,12 +293,12 @@ class CornersProblem(search.SearchProblem):
     def getStartState(self):
         "Returns the start state (in your state space, not the full Pacman state space)"
         "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        return self.startingPosition, frozenset()
 
     def isGoalState(self, state):
         "Returns whether this search state is a goal state of the problem"
         "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        return len(state[1]) == 4
 
     def getSuccessors(self, state):
         """
@@ -315,12 +316,17 @@ class CornersProblem(search.SearchProblem):
         for action in [Directions.NORTH, Directions.SOUTH, Directions.EAST, Directions.WEST]:
             # Add a successor state to the successor list if the action is legal
             # Here's a code snippet for figuring out whether a new position hits a wall:
-            #   x,y = currentPosition
-            #   dx, dy = Actions.directionToVector(action)
-            #   nextx, nexty = int(x + dx), int(y + dy)
-            #   hitsWall = self.walls[nextx][nexty]
-
-            "*** YOUR CODE HERE ***"
+            x, y = state[0]
+            dx, dy = Actions.directionToVector(action)
+            nextx, nexty = int(x + dx), int(y + dy)
+            hitsWall = self.walls[nextx][nexty]
+            if not hitsWall:
+                if (nextx, nexty) in self.corners:
+                    newSet = set(state[1])
+                    newSet.add((nextx, nexty))
+                    successors.append((((nextx, nexty), frozenset(newSet)), action, 1))
+                else:
+                    successors.append((((nextx, nexty), state[1]), action, 1))
 
         self._expanded += 1
         return successors
@@ -355,15 +361,32 @@ def cornersHeuristic(state, problem):
     """
     corners = problem.corners  # These are the corner coordinates
 
-    "*** YOUR CODE HERE ***"
-    unexplored_corners = list(filter(lambda corner: corner not in state[1], corners))
-    distance = 0
-    current = state[0]
-    while len(unexplored_corners) > 0:
-        closest_corener_dist, closest_corner = min(map(lambda corner: (util.manhattanDistance(current, corner), corner), corners))
-        distance += closest_corener_dist
-        unexplored_corners.remove(closest_corner)
-    return distance
+    node = state[0]
+    unvisitedCorners = []
+    visitedCorners = state[1]
+
+    sum = 0
+    for corner in corners:
+        if not corner in visitedCorners:
+            unvisitedCorners.append(corner)
+
+    currentPoint = node
+    while len(unvisitedCorners) > 0:
+        distance, corner = min([(util.manhattanDistance(currentPoint, corner), corner) for corner in unvisitedCorners])
+        sum += distance
+        currentPoint = corner
+        unvisitedCorners.remove(corner)
+
+    print "Heuristic: ", sum
+    return sum
+    # unexplored_corners = list(filter(lambda corner: corner not in state[1], corners))
+    # distance = 0
+    # current = state[0]
+    # while len(unexplored_corners) > 0:
+    #     closest_corner_dist, closest_corner = min(map(lambda corner: (util.manhattanDistance(current, corner), corner), corners))
+    #     distance += closest_corner_dist
+    #     unexplored_corners.remove(closest_corner)
+    # return distance
 
 
 class AStarCornersAgent(SearchAgent):
@@ -433,6 +456,33 @@ class AStarFoodSearchAgent(SearchAgent):
         self.searchFunction = lambda prob: search.aStarSearch(prob, foodHeuristic)
         self.searchType = FoodSearchProblem
 
+# This is a helper data structure build to support Kruskal's mst algorithm
+# copy with modification from wikipedia psudo
+class UnionFind:
+    def __init__(self):
+        self.parent = dict()
+        self.rank = dict()
+
+    def make_set(self, vertice):
+        self.parent[vertice] = vertice
+        self.rank[vertice] = 0
+
+    def find(self, vertice):
+        if self.parent[vertice] != vertice:
+            self.parent[vertice] = self.find(self.parent[vertice])
+        return self.parent[vertice]
+
+    def union(self, vertice1, vertice2):
+        root1 = self.find(vertice1)
+        root2 = self.find(vertice2)
+        if root1 != root2:
+            if self.rank[root1] > self.rank[root2]:
+                self.parent[root2] = root1
+            else:
+                self.parent[root1] = root2
+                if self.rank[root1] == self.rank[root2]:
+                    self.rank[root2] += 1
+
 
 def foodHeuristic(state, problem):
     """
@@ -460,8 +510,46 @@ def foodHeuristic(state, problem):
     Subsequent calls to this heuristic can access problem.heuristicInfo['wallCount']
     """
     position, foodGrid = state
-    "*** YOUR CODE HERE ***"
-    return 0
+    foodlist = foodGrid.asList()
+
+    def build_graph_from_coords(cordsList, pacmanCoords):
+        cordsList.append(pacmanCoords)
+        graph = defaultdict(list)
+        for p1 in cordsList:
+            for p2 in cordsList:
+                if p1 != p2:
+                    graph[p1].append((p2, util.manhattanDistance(p1, p2)))
+        return graph
+
+    def kruskal_mst(graph):
+        unionfind = UnionFind()
+        for vertice in graph.keys():
+            unionfind.make_set(vertice)
+
+        minimum_spanning_tree = set()
+        edges = list()
+        for key in graph.keys():
+            for val in graph[key]:
+                edges.append((val[1], key, val[0]))
+        edges.sort()
+        for edge in edges:
+            weight, vertice1, vertice2 = edge
+            if unionfind.find(vertice1) != unionfind.find(vertice2):
+                unionfind.union(vertice1, vertice2)
+                minimum_spanning_tree.add(edge)
+
+        return minimum_spanning_tree
+
+    def sumweights(mst):
+        weights = map(lambda t: t[0], mst)
+        return sum(weights, 0)
+
+
+
+    weight = sumweights(kruskal_mst(build_graph_from_coords(foodlist, position)))
+    return weight
+
+
 
 
 class ClosestDotSearchAgent(SearchAgent):
@@ -489,9 +577,7 @@ class ClosestDotSearchAgent(SearchAgent):
         food = gameState.getFood()
         walls = gameState.getWalls()
         problem = AnyFoodSearchProblem(gameState)
-
-        "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
+        return search.bfs(problem)
 
 
 class AnyFoodSearchProblem(PositionSearchProblem):
@@ -526,9 +612,8 @@ class AnyFoodSearchProblem(PositionSearchProblem):
         that will complete the problem definition.
         """
         x, y = state
+        return self.food[x][y]
 
-        "*** YOUR CODE HERE ***"
-        util.raiseNotDefined()
 
 
 ##################
